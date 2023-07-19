@@ -1,0 +1,273 @@
+from binance.client import Client
+from copy import deepcopy
+import websocket
+import pandas as pd
+import numpy as np
+import csv
+import json
+import requests
+from datetime import datetime
+
+response= requests.get("https://fapi.binance.com/fapi/v1/klines?symbol=TRXUSDT&interval=30m&limit=20")
+fox_img=response.json()
+close=[]
+
+for i in fox_img:
+    close.append(float(i[4]))
+    
+with open('adityatrx30min.csv','w') as f:
+                write=csv.writer(f)
+                write.writerow(close[-20:])
+            
+#api_keym='qNBOEWv2vbwOir0aYu3w57qSww0Bs9OiibPWodLt9DvbIMcK5tDkDWsklAfIAgD3'
+#api_secretm='QpvViiHUhSdYenR6UhGt4GgRxtek22x4dL1dWNsbKJE5j5H8PZyZZQ427mrE4NGr'
+#clientm=Client(api_key=api_keym,api_secret=api_secretm,testnet=False)
+
+socket1m='wss://stream.binance.com:9443/ws/trxusdt@kline_1m'
+
+#symbolm='BTCUSDT'
+symbolb='TRXUSDT'
+api_key='yhlFqImtLWfWjLmAzjO7v4ostrGXMCBmzNvWI1GDF8BrtcYFx9WeR60FhdcGDTTh'
+api_secret='L1tRT7hJiyPwJBKFm9226NpNOhlc09zazgMA6UygpEw1BXUV2turJFkWchJWYbmN'
+client=Client(api_key=api_key,api_secret=api_secret,testnet=False)
+
+quantity=740
+LEVERAGE=29
+
+#leverage=clientm.futures_change_leverage(symbol=symbolm,leverage=LEVERAGE)
+leverage=client.futures_change_leverage(symbol=symbolb,leverage=LEVERAGE) 
+
+
+'''TO TAKE PREVIOUS CLOSING PRIZES FROM STORED DATABASE TO A LIST (1m)'''
+file=open('adityatrx30min.csv')
+csvreader=csv.reader(file)
+#pc1m: list previous closes for 1m
+pc1m=[]
+for row in csvreader:
+    pc1m.append(row)
+print(pc1m)
+pc1m=pc1m[0]
+pcloses1m=[]
+pcloses5m=[]
+for i in pc1m:
+    pcloses5m.append(float(i))
+print(pcloses5m)
+#dfpc1m: dataframe of previous closes for 1m
+dfpc1m=pd.DataFrame(np.array(pcloses5m))
+dfpc1m=dfpc1m[0]
+
+position='none'
+busdt='none'
+pre_level=-1
+cur_level=0
+ugaplimit=0
+lgaplimit=0
+gaplimit=0
+buy=0
+sell=0
+triggers=0
+triggerl=0
+level_price=0
+sell_price=0
+buy_price=0
+
+
+def ubbands(dfpc1m):
+   
+    upper=dfpc1m.mean()+2*(dfpc1m.std())
+    return upper
+   
+def lbbands(dfpc1m):
+   
+    lower=dfpc1m.mean()-2*(dfpc1m.std())
+    return lower
+
+def on_message(ws1m, message):
+    global pcloses1m, pcloses5m ,quantity, dfpc1m , position , busdt, ml, rebuy, resell, gaplimit, sell_price , buy_price, upper,lower, LEVERAGE ,buy , triggers,triggerl , cur_level, pre_level , level_price, sell, ugaplimit, lgaplimit , cp
+    
+    jm = json.loads(message)
+    candle = jm["k"]
+    current_price = candle['c']
+    #cp=float(candle['c'])
+    #cp=cp-0.000095
+    #current_price is in string format
+    
+    if candle['x']==True:
+    	response= requests.get("https://fapi.binance.com/fapi/v1/klines?symbol=TRXUSDT&interval=30m&limit=20")
+    	fox_img=response.json()
+    	pcloses5m=[]
+    	response= requests.get("https://fapi.binance.com/fapi/v1/klines?symbol=TRXUSDT&interval=1m&limit=1")
+    	fox_img2=response.json()
+    	
+    	for j in fox_img2:
+    		cp=float(j[4])
+    	
+    	for i in fox_img:
+    		pcloses5m.append(float(i[4]))
+    	
+    	with open('adityatrx30min.csv','w') as f:
+    		write=csv.writer(f)
+    		write.writerow(pcloses5m[-20:])
+    		pcloses5m=pcloses5m[-20:]
+               
+    dfpc1m=pd.DataFrame(np.array(pcloses5m[-20:]))
+    dfpc1m=dfpc1m[0]
+    ml=dfpc1m.mean()
+    ub=ubbands(dfpc1m)
+    lb=lbbands(dfpc1m)
+    
+    
+    gaplimit=(ub-lb)/4
+    lgaplimit=(ub-lb)/8
+    
+    #print("lb=",lb)
+    #print("ub=",ub)
+    print("ml=",ml)
+    print("cp=",cp)
+    #print("ugaplimit=",ugaplimit)
+    #print("lgaplimit=",lgaplimit)
+    
+    
+    if buy == 0:
+    	if cp < (lb + (gaplimit))  and triggerl==0:
+    		triggerl = 1
+    		sell = 2
+    		buy_price = deepcopy(cp)
+    		pre_level = -1
+    		cur_level = 0
+    		print("lower")
+    		print("cur_level=",cur_level)
+    		print("buy opning price=",buy_price)
+    		print("cp=",cp)
+    		
+    	if cp < (buy_price - gaplimit) and triggerl==1 :
+    		pre_level = cur_level
+    		cur_level = cur_level + 1
+    		buy_price = buy_price - (gaplimit + lgaplimit)
+    		print("cur_level=",cur_level)
+    		print("buy opening price=",buy_price)
+    		
+    	if cp > (buy_price + (gaplimit)) and (cur_level - 1)==pre_level and triggerl==1:
+    		#buy order
+    		buyorder=client.futures_create_order(symbol=symbolb,side='BUY',type='MARKET',quantity=quantity)
+    		buy_price=deepcopy(cp)
+    		buy = 1
+    		pre_level = -1
+    		cur_level = 0
+    		triggerl=0
+    		print("Buy order opened=",buy_price)
+    		
+    	
+
+    if buy == 1:
+    	if cp > (ub - gaplimit) and triggerl==0:
+    		triggerl = 1
+    		buy_price = deepcopy(cp)
+    		pre_level = -1
+    		cur_level = 0
+    		print("upper")
+    		print("cur_level=",cur_level)
+    		print("buy closing price=",buy_price)
+    		print("cp=",cp)
+    		
+    	if cp > buy_price + (gaplimit) and triggerl==1:
+    		pre_level = cur_level
+    		cur_level = cur_level + 1
+    		buy_price = buy_price + (gaplimit + lgaplimit)
+    		print("cur level=",cur_level)
+    		print("buy closing price=",cp)
+    		
+    	if cp < (buy_price - (gaplimit + lgaplimit)) and (cur_level - 1)==pre_level and triggerl==1:
+    		#sell order
+    		sellorder=client.futures_create_order(symbol=symbolb,side='SELL',type='MARKET',quantity=quantity)
+    		buy_price=deepcopy(cp)
+    		sell=0
+    		buy=0
+    		triggerl=0
+    		pre_level = -1
+    		cur_level = 0
+    		print("buy order closed=",cp)
+    	if cp < (buy_price - (gaplimit * 2)) and buy==1 :
+    		#sell order
+    		sellorder=client.futures_create_order(symbol=symbolb,side='SELL',type='MARKET',quantity=quantity)
+    		print("buy order stoploss", cp)
+    		sell=0
+    		buy=0
+    		triggerl=0
+    "Short "
+    if sell == 0:
+    	if cp > (ub - (gaplimit) )  and triggers==0:
+    		triggers=1
+    		buy=2
+    		sell_price = deepcopy(cp)
+    		pre_level = -1
+    		cur_level = 0
+    		print("upper")
+    		print("cur_level=",cur_level)
+    		print("sell opening price=",sell_price)
+    		print("cp=",cp)
+    		
+    	if cp > (sell_price + gaplimit) and triggers==1:
+    		triggers=1
+    		pre_level = cur_level
+    		cur_level = cur_level + 1
+    		sell_price = sell_price + gaplimit
+    		print("cur level=",cur_level)
+    		print("sell opening price=",cp)
+    		
+    	if cp < (sell_price - gaplimit) and (cur_level - 1)==pre_level and triggers==1:
+    		#sell order
+    		sellorder=client.futures_create_order(symbol=symbolb,side='SELL',type='MARKET',quantity=quantity)
+    		sell_price=deepcopy(cp)
+    		sell=1
+    		triggers=0
+    		pre_level = -1
+    		cur_level = 0
+    		print("Sell order opened=",cp)	
+    		
+    	
+    
+    if sell==1:
+    	if cp < (lb + lgaplimit) and triggers==0:
+    		triggers = 1
+    		sell_price = deepcopy(cp)
+    		pre_level = -1
+    		cur_level = 0
+    		print("lower")
+    		print("cur_level=",cur_level)
+    		print("sell closing price=",sell_price)
+    		print("cp=",cp)
+    		
+    	if cp < (sell_price - (lgaplimit/2)) and triggers==1:
+    		triggers=1
+    		pre_level = cur_level
+    		cur_level = cur_level + 1
+    		sell_price = sell_price - lgaplimit
+    		print("cur_level=",cur_level)
+    		print("sell closing price=",sell_price)
+    	if cp > (sell_price + lgaplimit) and (cur_level - 1)==pre_level and triggers==1:
+    		#buy order
+    		buyorder=client.futures_create_order(symbol=symbolb,side='BUY',type='MARKET',quantity=quantity)
+    		sell_price=deepcopy(cp)
+    		buy=0
+    		sell=0
+    		pre_level = -1
+    		cur_level = 0
+    		print("sell order closed=",cp)
+    		triggers=0
+    	if cp >	(sell_price + (lgaplimit+gaplimit) ) and sell==1:
+    		#buy order
+    		buyorder=client.futures_create_order(symbol=symbolb,side='BUY',type='MARKET',quantity=quantity)
+    		print("sell order stoploss", cp)
+    		sell=0
+    		buy=0
+    		triggers=0
+
+    
+  
+
+def on_close(ws1m):
+    print("### closed ###")
+   
+ws1m = websocket.WebSocketApp(socket1m, on_message= on_message, on_close= on_close)
+ws1m.run_forever()
